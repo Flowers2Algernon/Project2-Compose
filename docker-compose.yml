@@ -1,0 +1,64 @@
+
+
+services:
+  # Docker-in-Docker service - allows Jenkins to build Docker images
+  dind:
+    image: docker:dind
+    container_name: jenkins-dind
+    privileged: true  # Required for Docker-in-Docker to function
+    restart: unless-stopped
+    networks:
+      jenkins:
+        aliases:
+          - docker  # Network alias for Jenkins to connect via tcp://docker:2376
+    environment:
+      # Enable TLS for secure communication between Jenkins and DinD
+      DOCKER_TLS_CERTDIR: /certs
+    volumes:
+      # Shared volumes for TLS certificates and Jenkins data
+      - docker-certs-ca:/certs/ca
+      - docker-certs-client:/certs/client
+      - jenkins-data:/var/jenkins_home
+      - docker-data:/var/lib/docker  # Persist Docker images and layers
+    ports:
+      - "2376:2376"  # Docker daemon TLS port
+
+  # Jenkins service - CI/CD automation server
+  jenkins:
+    image: jenkins/jenkins:lts-jdk17  # Using Java 17 LTS version
+    container_name: jenkins-master
+    restart: unless-stopped
+    user: root  # Required to access Docker socket and certificates
+    networks:
+      - jenkins
+    environment:
+      # Configure Jenkins to connect to DinD service
+      DOCKER_HOST: tcp://docker:2376
+      DOCKER_CERT_PATH: /certs/client
+      DOCKER_TLS_VERIFY: 1
+      # Prevent setup wizard for automated deployments (optional)
+      # JAVA_OPTS: "-Djenkins.install.runSetupWizard=false"
+    volumes:
+      # Mount TLS certificates (read-only for security)
+      - docker-certs-client:/certs/client:ro
+      # Persist Jenkins home directory (jobs, configs, plugins)
+      - jenkins-data:/var/jenkins_home
+      # Mount Docker binary for Jenkins to use Docker CLI
+      - /usr/bin/docker:/usr/bin/docker:ro
+    ports:
+      - "8080:8080"   # Jenkins web UI
+      - "50000:50000" # Jenkins agent communication port
+    depends_on:
+      - dind  # Ensure DinD starts before Jenkins
+
+# Define custom network for service communication
+networks:
+  jenkins:
+    driver: bridge
+
+# Named volumes for data persistence
+volumes:
+  docker-certs-ca:     # CA certificates for Docker TLS
+  docker-certs-client: # Client certificates for Docker TLS
+  jenkins-data:        # Jenkins home directory
+  docker-data:         # Docker images and layers cache
